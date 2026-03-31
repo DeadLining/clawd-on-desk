@@ -14,4 +14,16 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // Render window → main (cursor polling control during reactions)
   pauseCursorPolling: () => ipcRenderer.send("pause-cursor-polling"),
   resumeFromReaction: () => ipcRenderer.send("resume-from-reaction"),
+
+  // ── Clawd Pet Plugin: chat bubble bridge ──
+  onSpeechBubble: (cb) => ipcRenderer.on("speech-bubble", (_, text, timeout) => cb(text, timeout)),
+  onChatOutbound: (cb) => ipcRenderer.on("chat-outbound", (_, text) => cb(text)),
+  submitChat: (text) => ipcRenderer.send("chat-submit", text),
+  setFocusable: (focusable) => ipcRenderer.send("set-focusable", focusable),
+  onWindowBlur: (cb) => ipcRenderer.on("window-blur", cb),
+  onPetState: (cb) => ipcRenderer.on("pet-state", (_, state) => cb(state)),
+  onWsStatus: (cb) => ipcRenderer.on("ws-status", (_, status) => cb(status)),
+  onOpenChatInput: (cb) => ipcRenderer.on("open-chat-input", () => cb()),
+  onDismissChat: (cb) => ipcRenderer.on("dismiss-chat", () => cb()),
+  wsConnectedUpdate: (connected) => ipcRenderer.send("ws-connected-update", connected),
 });

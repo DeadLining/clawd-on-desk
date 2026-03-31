@@ -87,6 +87,33 @@
 
 彩蛋——试试双击、连点 4 下、或反复戳 Clawd，会有隐藏反应。
 
+### AI 聊天伙伴
+
+> **与 OpenClaw 集成** — 此功能需要 [OpenClaw](https://github.com/DeadLing/clawd-on-desk) 插件运行。Clawd 通过 WebSocket 连接到 OpenClaw 网关来发送/接收消息。
+
+通过右键菜单 → "Clawd Pet 连接"启用后，Clawd 成为一个 AI 聊天伙伴：
+
+| 触发方式 | 行为 |
+|---|---|
+| **双击**（WS 已连接） | 打开聊天输入框（任何状态：idle、thinking、working 都有效） |
+| **单击**（聊天可见时） | 通过失焦或点击外部关闭聊天输入框 |
+| **收到消息** | 显示聊天气泡（10 秒后自动消失） |
+
+**连接设置**（右键 → "Clawd Pet 连接"）：
+- **启用 Clawd Pet 连接** — 切换 WebSocket 连接（默认：禁用，每次启动重新开始）
+- **WS 主机** — WebSocket 服务器主机（默认：`127.0.0.1`）
+- **WS 端口** — WebSocket 服务器端口（默认：`58889`）
+
+**工作原理**：
+1. 通过右键菜单启用连接
+2. Clawd 连接到 `ws://127.0.0.1:58889`（自动重连，指数退避）
+3. 双击 Clawd 打开聊天输入框，输入消息，按 Enter 发送
+4. OpenClaw 处理消息并通过 WebSocket 发送响应
+5. 显示 AI 响应的聊天气泡（最多 500 字符，10 秒超时）
+6. 发送消息或失焦（点击其他应用）时聊天输入框自动关闭
+
+> **注意**：连接设置（主机/端口）在重启后保持，但 `pluginEnabled` 每次启动时始终为 `false`（出于安全考虑——每次启动后需要重新启用连接）。
+
 ## 快速开始
 
 ```bash
@@ -95,7 +122,7 @@ git clone https://github.com/rullerzhou-afk/clawd-on-desk.git
 cd clawd-on-desk
 
 # 安装依赖
-npm install
+ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ npm install
 
 # 注册 Claude Code hooks（仅在确认版本兼容时注册 versioned hooks；版本未知时自动回退到核心 hooks 并清理旧的不兼容条目）
 node hooks/install.js

@@ -89,6 +89,33 @@ Drag Clawd to the right screen edge (or right-click → "Mini Mode") to enter mi
 
 Easter eggs — try double-clicking, rapid 4-clicks, or poking Clawd repeatedly to discover hidden reactions.
 
+### AI Chat Companion
+
+> **Integration with OpenClaw** — This feature requires the [OpenClaw](https://github.com/DeadLing/clawd-on-desk) plugin to be running. Clawd connects to the OpenClaw gateway via WebSocket to send/receive messages.
+
+When enabled via right-click menu → "Clawd Pet Connection", Clawd becomes an AI chat companion:
+
+| Trigger | Behavior |
+|---|---|
+| **Double-click** (WS connected) | Opens chat input overlay (works in any state: idle, thinking, working) |
+| **Single-click** (chat visible) | Closes chat input via blur or click outside |
+| **Incoming message** | Displays speech bubble (auto-dismiss after 10s) |
+
+**Connection Settings** (right-click → "Clawd Pet Connection"):
+- **Enable Clawd Pet Connection** — Toggle WebSocket connection (default: disabled, starts fresh each launch)
+- **WS Host** — WebSocket server host (default: `127.0.0.1`)
+- **WS Port** — WebSocket server port (default: `58889`)
+
+**How it works**:
+1. Enable the connection via right-click menu
+2. Clawd connects to `ws://127.0.0.1:58889` (auto-reconnect with exponential backoff)
+3. Double-click Clawd to open chat input, type your message, press Enter to send
+4. OpenClaw processes the message and sends responses via WebSocket
+5. Speech bubbles appear with AI responses (max 500 chars, 10s timeout)
+6. Chat input closes automatically on blur (clicking other apps) or sending message
+
+> **Note**: Connection settings (host/port) persist across restarts, but `pluginEnabled` always starts as `false` for safety — you must re-enable the connection after each launch.
+
 ## Quick Start
 
 ```bash
@@ -97,7 +124,7 @@ git clone https://github.com/rullerzhou-afk/clawd-on-desk.git
 cd clawd-on-desk
 
 # Install dependencies
-npm install
+ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ npm install
 
 # Start Clawd (auto-registers Claude Code hooks on launch)
 npm start

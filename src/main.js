@@ -30,6 +30,11 @@ const SIZES = {
 
 let lang = "en";
 
+// ── Clawd Pet Plugin: configuration ──
+let pluginEnabled = false;
+let pluginWsHost = "127.0.0.1";
+let pluginWsPort = 58889;
+
 // ── Position persistence ──
 const PREFS_PATH = path.join(app.getPath("userData"), "clawd-prefs.json");
 
@@ -57,6 +62,8 @@ function savePrefs() {
     miniMode: _mini.getMiniMode(), preMiniX: _mini.getPreMiniX(), preMiniY: _mini.getPreMiniY(), lang,
     showTray, showDock,
     autoStartWithClaude, bubbleFollowPet, showSessionId,
+    // ── Clawd Pet Plugin: persist plugin config (pluginEnabled intentionally NOT persisted) ──
+    pluginWsHost, pluginWsPort,
   };
   try { fs.writeFileSync(PREFS_PATH, JSON.stringify(data)); } catch {}
 }
@@ -324,6 +331,87 @@ const _serverCtx = {
 const _server = require("./server")(_serverCtx);
 const { startHttpServer, getHookServerPort, syncClawdHooks } = _server;
 
+// ── Clawd Pet Plugin: WebSocket client to OpenClaw ──
+const WebSocket = require("ws");
+let petWs = null;
+let wsReconnectTimer = null;
+let wsReconnectAttempts = 0;
+const WS_RECONNECT_DELAYS = [1000, 2000, 4000, 8000, 16000, 32000, 60000];
+
+function connectPetWs() {
+  if (!pluginEnabled) return;
+  if (petWs && (petWs.readyState === WebSocket.CONNECTING || petWs.readyState === WebSocket.OPEN)) return;
+
+  const url = `ws://${pluginWsHost}:${pluginWsPort}`;
+  console.log(`[ClawdPet] Connecting to ${url}...`);
+  petWs = new WebSocket(url);
+
+  petWs.on("open", () => {
+    console.log("[ClawdPet] Connected to OpenClaw gateway");
+    wsReconnectAttempts = 0;
+    sendToRenderer("ws-status", "connected");
+    sendToHitWin("ws-connected-update", true);
+  });
+
+  petWs.on("message", (data) => {
+    try {
+      const msg = JSON.parse(data.toString());
+      switch (msg.type) {
+        case "speech-bubble":
+          sendToRenderer("speech-bubble", String(msg.text || "").slice(0, 500), msg.timeout || 10000);
+          break;
+        case "state":
+          sendToRenderer("pet-state", msg.state);
+          break;
+        case "ping":
+          petWs.send(JSON.stringify({ type: "pong" }));
+          break;
+      }
+    } catch (e) {
+      console.error("[ClawdPet] Failed to parse WS message:", e.message);
+    }
+  });
+
+  petWs.on("close", () => {
+    console.log("[ClawdPet] Disconnected from gateway");
+    sendToRenderer("ws-status", "disconnected");
+    sendToHitWin("ws-connected-update", false);
+    petWs = null;
+    scheduleReconnect();
+  });
+
+  petWs.on("error", (err) => {
+    console.error(`[ClawdPet] WebSocket error: ${err.message}`);
+  });
+}
+
+function scheduleReconnect() {
+  if (!pluginEnabled) return;
+  if (wsReconnectTimer) return;
+  const delay = WS_RECONNECT_DELAYS[Math.min(wsReconnectAttempts, WS_RECONNECT_DELAYS.length - 1)];
+  wsReconnectAttempts++;
+  console.log(`[ClawdPet] Reconnecting in ${delay / 1000}s (attempt ${wsReconnectAttempts})...`);
+  wsReconnectTimer = setTimeout(() => {
+    wsReconnectTimer = null;
+    connectPetWs();
+  }, delay);
+}
+
+function stopPetWs() {
+  if (wsReconnectTimer) { clearTimeout(wsReconnectTimer); wsReconnectTimer = null; }
+  if (petWs) { try { petWs.close(); } catch {} petWs = null; }
+  wsReconnectAttempts = 0;
+}
+
+function startPetWs() {
+  stopPetWs();
+  connectPetWs();
+}
+
+function restartPetWs() {
+  startPetWs();
+}
+
 // ── alwaysOnTop recovery (Windows DWM / Shell can strip TOPMOST flag) ──
 // The "always-on-top-changed" event only fires from Electron's own SetAlwaysOnTop
 // path — it does NOT fire when Explorer/Start menu/Gallery silently reorder windows.
@@ -440,6 +528,14 @@ const _menuCtx = {
   getUpdateMenuItem: () => getUpdateMenuItem(),
   buildSessionSubmenu: () => buildSessionSubmenu(),
   savePrefs,
+  // ── Clawd Pet Plugin ──
+  get pluginEnabled() { return pluginEnabled; },
+  set pluginEnabled(v) { pluginEnabled = v; },
+  get pluginWsHost() { return pluginWsHost; },
+  set pluginWsHost(v) { pluginWsHost = v; },
+  get pluginWsPort() { return pluginWsPort; },
+  set pluginWsPort(v) { pluginWsPort = v; },
+  restartPetWs: () => restartPetWs(),
   getHookServerPort: () => getHookServerPort(),
   clampToScreen,
   getNearestWorkArea,
@@ -471,6 +567,10 @@ function createWindow() {
   if (prefs && typeof prefs.autoStartWithClaude === "boolean") autoStartWithClaude = prefs.autoStartWithClaude;
   if (prefs && typeof prefs.bubbleFollowPet === "boolean") bubbleFollowPet = prefs.bubbleFollowPet;
   if (prefs && typeof prefs.showSessionId === "boolean") showSessionId = prefs.showSessionId;
+  // ── Clawd Pet Plugin: restore plugin config (pluginEnabled intentionally NOT persisted) ──
+  if (prefs && typeof prefs.pluginWsHost === "string") pluginWsHost = prefs.pluginWsHost;
+  if (prefs && typeof prefs.pluginWsPort === "number" && prefs.pluginWsPort > 0 && prefs.pluginWsPort < 65536) pluginWsPort = prefs.pluginWsPort;
+  // pluginEnabled is intentionally NOT persisted — always starts as false
   // macOS: apply dock visibility (default hidden)
   if (isMac) {
     applyDockVisibility();
@@ -683,6 +783,45 @@ function createWindow() {
   ipcMain.on("bubble-height", (event, height) => _perm.handleBubbleHeight(event, height));
   ipcMain.on("permission-decide", (event, behavior) => _perm.handleDecide(event, behavior));
 
+  // ── Clawd Pet Plugin: chat + focusable IPC ──
+  ipcMain.on("chat-submit", (event, text) => {
+    if (petWs && petWs.readyState === WebSocket.OPEN) {
+      petWs.send(JSON.stringify({ type: "chat", text }));
+    } else {
+      console.warn("[ClawdPet] Cannot send: WebSocket not connected");
+    }
+  });
+
+  ipcMain.on("set-focusable", (event, focusable) => {
+    if (win && !win.isDestroyed()) {
+      win.setFocusable(focusable);
+      if (focusable) {
+        // Set ignore timestamp to avoid win.focus() side effects
+        const timestamp = Date.now();
+        if (timestamp >= ignoreBlurUntil) {
+          ignoreBlurUntil = timestamp + 200;  // Ignore blur for 200ms
+        }
+        win.focus();
+      }
+    }
+  });
+
+  ipcMain.on("window-blur", () => {
+    sendToRenderer("window-blur");
+  });
+
+  ipcMain.on("open-chat-input", () => {
+    sendToRenderer("open-chat-input");
+  });
+
+  ipcMain.on("dismiss-chat", () => {
+    sendToRenderer("dismiss-chat");
+  });
+
+  ipcMain.on("ws-connected-update", (_, connected) => {
+    sendToHitWin("ws-connected-update", connected);
+  });
+
   initFocusHelper();
   startMainTick();
   startHttpServer();
@@ -734,6 +873,25 @@ function createWindow() {
   });
 
   guardAlwaysOnTop(win);
+
+  // ── Clawd Pet Plugin: dismiss chat input when clicking other apps (window loses focus) ──
+  // Ignore blur events for 200ms after win.focus() to avoid side effects
+  let ignoreBlurUntil = 0;
+  let blurTimer = null;
+  win.on("blur", () => {
+    if (Date.now() < ignoreBlurUntil) {
+      return;  // Ignore blur from win.focus() side effects
+    }
+    // Debounce: cancel previous timer, wait 50ms before sending
+    if (blurTimer) { clearTimeout(blurTimer); blurTimer = null; }
+    blurTimer = setTimeout(() => {
+      if (win && !win.isDestroyed()) {
+        sendToRenderer("window-blur");
+      }
+      blurTimer = null;
+    }, 50);
+  });
+
   startTopmostWatchdog();
 
   // ── Display change: re-clamp window to prevent off-screen ──
@@ -936,9 +1094,15 @@ if (!gotTheLock) {
     // Auto-updater: setup event handlers + silent check after 5s
     setupAutoUpdater();
     setTimeout(() => checkForUpdates(false), 5000);
+
+    // ── Clawd Pet Plugin: start WebSocket if enabled ──
+    startPetWs();
   });
 
   app.on("before-quit", () => {
+    // ── Clawd Pet Plugin: stop WebSocket ──
+    stopPetWs();
+
     isQuitting = true;
     savePrefs();
     unregisterToggleShortcut();

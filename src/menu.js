@@ -100,6 +100,14 @@ const i18n = {
     hidePet: "Hide Clawd",
     toggleShortcut: "Toggle Shortcut: {shortcut}",
     quit: "Quit",
+    // ── Clawd Pet Plugin ──
+    pluginConnection: "Clawd Pet Connection",
+    pluginEnabled: "Enable Clawd Pet Connection",
+    pluginIp: "WS Host",
+    pluginPort: "WS Port",
+    pluginCustomIp: "Custom Host…",
+    pluginCustomPort: "Custom Port…",
+    cancel: "Cancel",
   },
   zh: {
     size: "大小",
@@ -147,6 +155,14 @@ const i18n = {
     hidePet: "隐藏 Clawd",
     toggleShortcut: "切换快捷键: {shortcut}",
     quit: "退出",
+    // ── Clawd Pet Plugin ──
+    pluginConnection: "Clawd Pet 连接",
+    pluginEnabled: "启用 Clawd Pet 连接",
+    pluginIp: "WS 主机",
+    pluginPort: "WS 端口",
+    pluginCustomIp: "自定义主机…",
+    pluginCustomPort: "自定义端口…",
+    cancel: "取消",
   },
 };
 
@@ -431,6 +447,45 @@ module.exports = function initMenu(ctx) {
         label: `${t("sessions")} (${ctx.sessions.size})`,
         submenu: ctx.buildSessionSubmenu(),
       },
+      // ── Clawd Pet Plugin menu ──
+      ...(ctx.pluginEnabled !== undefined ? [
+        { type: "separator" },
+        {
+          label: t("pluginConnection"),
+          submenu: [
+            {
+              label: t("pluginEnabled"),
+              type: "checkbox",
+              checked: ctx.pluginEnabled,
+              click: (menuItem) => {
+                ctx.pluginEnabled = menuItem.checked;
+                ctx.restartPetWs();
+                ctx.savePrefs();
+              },
+            },
+            { type: "separator" },
+            {
+              label: `${t("pluginIp")}  ${ctx.pluginWsHost}`,
+              enabled: ctx.pluginEnabled,
+              submenu: [
+                { label: "127.0.0.1", type: "radio", checked: ctx.pluginWsHost === "127.0.0.1", click: () => { ctx.pluginWsHost = "127.0.0.1"; ctx.restartPetWs(); ctx.savePrefs(); rebuildAllMenus(); } },
+                { label: "0.0.0.0", type: "radio", checked: ctx.pluginWsHost === "0.0.0.0", click: () => { ctx.pluginWsHost = "0.0.0.0"; ctx.restartPetWs(); ctx.savePrefs(); rebuildAllMenus(); } },
+                { type: "separator" },
+                { label: t("pluginCustomIp"), click: () => promptCustomIp(ctx, t) },
+              ],
+            },
+            {
+              label: `${t("pluginPort")}  ${ctx.pluginWsPort}`,
+              enabled: ctx.pluginEnabled,
+              submenu: [
+                { label: "58889", type: "radio", checked: ctx.pluginWsPort === 58889, click: () => { ctx.pluginWsPort = 58889; ctx.restartPetWs(); ctx.savePrefs(); rebuildAllMenus(); } },
+                { type: "separator" },
+                { label: t("pluginCustomPort"), click: () => promptCustomPort(ctx, t) },
+              ],
+            },
+          ],
+        },
+      ] : []),
     ];
     // macOS: Dock and Menu Bar visibility toggles
     if (isMac) {
@@ -489,6 +544,64 @@ module.exports = function initMenu(ctx) {
     if (ctx.bubbleFollowPet && ctx.pendingPermissions.length) ctx.repositionBubbles();
     buildContextMenu();
     ctx.savePrefs();
+  }
+
+  // ── Clawd Pet Plugin: custom IP/port input dialog ──
+  function showInputDialog(title, defaultValue) {
+    return new Promise((resolve) => {
+      const inputWin = new BrowserWindow({
+        width: 360, height: 160,
+        resizable: false, minimizable: false, maximizable: false,
+        fullscreenable: false, frame: false,
+        show: false, modal: true, parent: ctx.win,
+        webPreferences: { nodeIntegration: true, contextIsolation: false },
+      });
+      const { ipcMain } = require("electron");
+      const html = `<!DOCTYPE html><html><head><style>
+body{font:13px -apple-system,sans-serif;margin:0;padding:16px;background:#2b2b2b;color:#eee;overflow:hidden}
+label{display:block;margin-bottom:6px}input{width:100%;box-sizing:border-box;padding:5px 8px;border:1px solid #555;border-radius:4px;background:#1e1e1e;color:#eee;font-size:13px;outline:none}
+input:focus{border-color:#888}.btns{display:flex;justify-content:flex-end;gap:8px;margin-top:12px}
+button{padding:4px 14px;border:1px solid #555;border-radius:4px;background:#3c3c3c;color:#eee;cursor:pointer;font-size:13px}
+button:hover{background:#4a4a4a}button.ok{background:#094771;border-color:#094771}button.ok:hover{background:#0d5d8f}
+</style></head><body><label>${title}</label><input id="v" value="${defaultValue}" autofocus>
+<div class="btns"><button id="c">${t("cancel")}</button><button id="ok" class="ok">OK</button></div>
+<script>const{ipcRenderer}=require("electron");document.getElementById("ok").onclick=()=>{ipcRenderer.send("input-dialog-result",document.getElementById("v").value)};
+document.getElementById("c").onclick=()=>{ipcRenderer.send("input-dialog-result",null)};
+document.getElementById("v").addEventListener("keydown",e=>{if(e.key==="Enter")document.getElementById("ok").click();if(e.key==="Escape")document.getElementById("c").click()});</script></body></html>`;
+      inputWin.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+      ipcMain.once("input-dialog-result", (_e, val) => {
+        resolve(val);
+        if (!inputWin.isDestroyed()) inputWin.close();
+      });
+      inputWin.once("closed", () => {
+        ipcMain.removeAllListeners("input-dialog-result");
+        resolve(null);
+      });
+      inputWin.once("ready-to-show", () => inputWin.show());
+    });
+  }
+
+  async function promptCustomIp(ctx, t) {
+    const val = await showInputDialog(t("pluginCustomIp"), ctx.pluginWsHost);
+    if (val && val.trim()) {
+      ctx.pluginWsHost = val.trim();
+      ctx.restartPetWs();
+      ctx.savePrefs();
+      rebuildAllMenus();
+    }
+  }
+
+  async function promptCustomPort(ctx, t) {
+    const val = await showInputDialog(t("pluginCustomPort"), String(ctx.pluginWsPort));
+    if (val) {
+      const port = parseInt(val, 10);
+      if (port > 0 && port < 65536) {
+        ctx.pluginWsPort = port;
+        ctx.restartPetWs();
+        ctx.savePrefs();
+        rebuildAllMenus();
+      }
+    }
   }
 
   return {

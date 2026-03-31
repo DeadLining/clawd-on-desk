@@ -9,6 +9,10 @@ let currentSvg = null;
 let miniMode = false;
 let dndEnabled = false;
 
+// ── Clawd Pet Plugin: WebSocket connection state ──
+let wsConnected = false;
+window.hitAPI.onWsConnectedUpdate((connected) => { wsConnected = connected; });
+
 window.hitAPI.onStateSync((data) => {
   if (data.currentSvg !== undefined) currentSvg = data.currentSvg;
   if (data.miniMode !== undefined) {
@@ -131,6 +135,10 @@ let clickCount = 0;
 let clickTimer = null;
 let firstClickDir = null;
 
+// ── Clawd Pet Plugin: double-click detection for chat input ──
+const DBLCLICK_MS = 500;
+let lastClickTime = 0;
+
 function handleClick(clientX) {
   if (miniMode) {
     window.hitAPI.exitMiniMode();
@@ -138,13 +146,42 @@ function handleClick(clientX) {
   }
   if (isReacting || isDragReacting) return;
 
-  // Non-idle: focus terminal, no reaction
-  if (currentSvg !== "clawd-idle-follow.svg" && currentSvg !== "clawd-idle-living.svg") {
-    window.hitAPI.focusTerminal();
+  const now = Date.now();
+  clickCount++;
+
+  // ── Clawd Pet Plugin: 第一次点击记录时间、关闭聊天输入框（任何状态） ──
+  if (clickCount === 1) {
+    lastClickTime = now;
+    window.hitAPI.dismissChat();  // 单击关闭聊天（任何状态都生效）
+  }
+
+  if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
+
+  // ── Clawd Pet Plugin: 双击检测（仅 WS 已连接，任何状态） ──
+  if (clickCount === 2 && (now - lastClickTime) < DBLCLICK_MS && wsConnected) {
+    clickCount = 0;
+    firstClickDir = null;
+    lastClickTime = 0;
+    if (isReacting) {
+      if (reactTimer) { clearTimeout(reactTimer); reactTimer = null; }
+      isReacting = false;
+    }
+    window.hitAPI.openChatInput();
     return;
   }
 
-  clickCount++;
+  // 非 idle 状态：单次点击只聚焦终端，不播放反应动画
+  if (currentSvg !== "clawd-idle-follow.svg" && currentSvg !== "clawd-idle-living.svg") {
+    window.hitAPI.focusTerminal();
+    clickTimer = setTimeout(() => {
+      clickTimer = null;
+      clickCount = 0;
+      firstClickDir = null;
+    }, CLICK_WINDOW_MS);
+    return;
+  }
+
+  // Idle 状态：第一次点击时设置方向、聚焦终端
   if (clickCount === 1) {
     firstClickDir = clientX < area.offsetWidth / 2 ? "left" : "right";
     window.hitAPI.focusTerminal();

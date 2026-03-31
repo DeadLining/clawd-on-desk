@@ -112,6 +112,7 @@
   },
   "dependencies": {
     "electron-updater": "^6.8.3",
-    "koffi": "^2.15.2"
+    "koffi": "^2.15.2",
+    "ws": "^8.18.0"
   }
 }
